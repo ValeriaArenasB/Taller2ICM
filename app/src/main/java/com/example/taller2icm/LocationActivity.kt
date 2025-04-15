@@ -1,20 +1,231 @@
 package com.example.taller2icm
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.location.Geocoder
+import android.location.Location
 import android.os.Bundle
-import androidx.activity.enableEdgeToEdge
+import android.os.Looper
+import android.util.Log
+import android.widget.EditText
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.core.app.ActivityCompat
+import com.google.android.gms.location.*
+import com.google.android.gms.maps.*
+import com.google.android.gms.maps.model.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
 
-class LocationActivity : AppCompatActivity() {
+class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListener {
+
+    private lateinit var mapa: GoogleMap
+    private lateinit var clienteUbicacion: FusedLocationProviderClient
+    private lateinit var callbackUbicacion: LocationCallback
+    private var ultimaUbicacion: Location? = null
+    private var marcador: Marker? = null
+
+    private lateinit var manejadorSensores: SensorManager
+    private var sensorLuz: Sensor? = null
+    private var valorLuz: Float = 100f // valor por defecto
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         setContentView(R.layout.activity_location)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
+
+        val fragmentoMapa = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
+        fragmentoMapa.getMapAsync(this)
+
+        clienteUbicacion = LocationServices.getFusedLocationProviderClient(this)
+        manejadorSensores = getSystemService(SENSOR_SERVICE) as SensorManager
+        sensorLuz = manejadorSensores.getDefaultSensor(Sensor.TYPE_LIGHT)
+
+        findViewById<EditText>(R.id.texto).setOnEditorActionListener { vista, _, _ ->
+            val direccion = vista.text.toString()
+            buscarDireccion(direccion)
+            true
         }
+
+        configurarCallbackUbicacion()
+    }
+
+    override fun onMapReady(googleMap: GoogleMap) {
+        mapa = googleMap
+        aplicarEstiloInicial()
+        habilitarUbicacion()
+
+        mapa.setOnMapLongClickListener { posicion ->
+            marcarYObtenerDireccion(posicion)
+        }
+    }
+
+    private fun aplicarEstiloInicial() {
+        val estilo = if (valorLuz < 10f) R.raw.dark else R.raw.retro
+        mapa.setMapStyle(MapStyleOptions.loadRawResourceStyle(this, estilo))
+    }
+
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == 1 &&
+            grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            // 🔁 Solo después de aceptar el permiso, se activa la lógica real
+            habilitarUbicacion()
+        } else {
+            Toast.makeText(this, "Se necesita el permiso de ubicación", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+
+
+    private fun habilitarUbicacion() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            // ¡No hagas nada aquí! Solo solicita el permiso.
+            ActivityCompat.requestPermissions(this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
+            return
+        }
+
+        // Aquí sí puedes usar la ubicación
+        mapa.isMyLocationEnabled = true
+
+        clienteUbicacion.lastLocation.addOnSuccessListener { ubicacion ->
+            if (ubicacion != null) {
+                ultimaUbicacion = ubicacion
+                actualizarMarcador(ubicacion)
+                guardarEnJSON(ubicacion)
+            }
+        }
+
+        clienteUbicacion.requestLocationUpdates(
+            LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000).build(),
+            callbackUbicacion,
+            Looper.getMainLooper()
+        )
+    }
+
+
+
+    private fun configurarCallbackUbicacion() {
+        callbackUbicacion = object : LocationCallback() {
+            override fun onLocationResult(resultado: LocationResult) {
+                val ubicacionActual = resultado.lastLocation ?: return
+
+                ultimaUbicacion?.let {
+                    if (ubicacionActual.distanceTo(it) > 30) {
+                        ultimaUbicacion = ubicacionActual
+                        actualizarMarcador(ubicacionActual)
+                        guardarEnJSON(ubicacionActual)
+                    }
+                } ?: run {
+                    ultimaUbicacion = ubicacionActual
+                    actualizarMarcador(ubicacionActual)
+                    guardarEnJSON(ubicacionActual)
+                }
+            }
+        }
+    }
+
+    private fun actualizarMarcador(ubicacion: Location) {
+        val coordenadas = LatLng(ubicacion.latitude, ubicacion.longitude)
+        if (marcador == null) {
+            marcador = mapa.addMarker(MarkerOptions().position(coordenadas).title("Mi ubicación"))
+        } else {
+            marcador?.position = coordenadas
+        }
+        mapa.animateCamera(CameraUpdateFactory.newLatLngZoom(coordenadas, 17f))
+    }
+
+    private fun guardarEnJSON(ubicacion: Location) {
+
+        Log.d("DEBUG_JSON", "Se va a guardar: ${ubicacion.latitude}, ${ubicacion.longitude}")
+
+        val archivo = File(filesDir, "coordenadas.json")
+        val arreglo = if (archivo.exists()) JSONArray(archivo.readText()) else JSONArray()
+        val formatoFecha = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val objeto = JSONObject().apply {
+            put("lat", ubicacion.latitude)
+            put("lon", ubicacion.longitude)
+            put("hora", formatoFecha.format(Date()))
+        }
+        arreglo.put(objeto)
+        archivo.writeText(arreglo.toString())
+    }
+
+    private fun buscarDireccion(direccion: String) {
+        val geocoder = Geocoder(this)
+        val resultados = geocoder.getFromLocationName(direccion, 1)
+        if (resultados?.isNotEmpty() == true) {
+            val ubicacion = resultados[0]
+            val coordenadas = LatLng(ubicacion.latitude, ubicacion.longitude)
+            mapa.addMarker(MarkerOptions().position(coordenadas).title(direccion))
+            mapa.animateCamera(CameraUpdateFactory.newLatLngZoom(coordenadas, 16f))
+            mostrarDistancia(coordenadas)
+        }
+    }
+
+    private fun marcarYObtenerDireccion(coordenadas: LatLng) {
+        val geocoder = Geocoder(this)
+        val resultados = geocoder.getFromLocation(coordenadas.latitude, coordenadas.longitude, 1)
+        val titulo = resultados?.firstOrNull()?.getAddressLine(0) ?: "Ubicación sin nombre"
+        mapa.addMarker(MarkerOptions().position(coordenadas).title(titulo))
+        mostrarDistancia(coordenadas)
+    }
+
+    private fun mostrarDistancia(destino: LatLng) {
+        ultimaUbicacion?.let {
+            val origen = LatLng(it.latitude, it.longitude)
+            val resultado = FloatArray(1)
+            Location.distanceBetween(
+                origen.latitude, origen.longitude,
+                destino.latitude, destino.longitude,
+                resultado
+            )
+            Toast.makeText(
+                this,
+                "Distancia: %.2f metros".format(resultado[0]),
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    override fun onSensorChanged(evento: SensorEvent?) {
+        if (evento?.sensor?.type == Sensor.TYPE_LIGHT) {
+            valorLuz = evento.values[0]
+            if (::mapa.isInitialized) {
+                val estilo = if (valorLuz < 10000) R.raw.dark else R.raw.retro
+                mapa.setMapStyle(MapStyleOptions.loadRawResourceStyle(this, estilo))
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    override fun onResume() {
+        super.onResume()
+        sensorLuz?.let {
+            manejadorSensores.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        manejadorSensores.unregisterListener(this)
     }
 }
