@@ -1,8 +1,10 @@
 package com.example.taller2icm
 
+import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.ActivityResultCallback
@@ -16,24 +18,20 @@ import java.io.File
 
 const val PERMISSION_GALLERY = 101
 const val PERMISSION_CAMERA = 102
-class CameraActivity : AppCompatActivity() {
-    private lateinit var binding: ActivityCameraBinding
 
+class CameraActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityCameraBinding
     private lateinit var uri: Uri
 
     private val galleryLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent(), ActivityResultCallback {
-            it?.let { loadImage(it) }
-        }
+        ActivityResultContracts.GetContent(),
+        ActivityResultCallback { it?.let { loadImage(it) } }
     )
 
     private val cameraLauncher = registerForActivityResult(
         ActivityResultContracts.TakePicture(),
-        ActivityResultCallback {
-            if (it) {
-                loadImage(uri)
-            }
-        }
+        ActivityResultCallback { if (it) loadImage(uri) }
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,20 +40,55 @@ class CameraActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.btnGallery.setOnClickListener {
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
-                galleryLauncher.launch("image/*")
-            } else {
-                ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE), PERMISSION_GALLERY)
-            }
+            requestGalleryPermission()
         }
 
         binding.btnCamera.setOnClickListener {
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
                 val file = File(getFilesDir(), "picFromCamera")
-                uri = FileProvider.getUriForFile(baseContext, baseContext.packageName + ".fileprovider", file)
+                uri = FileProvider.getUriForFile(
+                    baseContext,
+                    baseContext.packageName + ".fileprovider",
+                    file
+                )
                 cameraLauncher.launch(uri)
             } else {
-                ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.CAMERA), PERMISSION_CAMERA)
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.CAMERA),
+                    PERMISSION_CAMERA
+                )
+            }
+        }
+    }
+
+    private fun requestGalleryPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_MEDIA_IMAGES
+                ) == PackageManager.PERMISSION_GRANTED) {
+                galleryLauncher.launch("image/*")
+            } else {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.READ_MEDIA_IMAGES),
+                    PERMISSION_GALLERY
+                )
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED) {
+                galleryLauncher.launch("image/*")
+            } else {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
+                    PERMISSION_GALLERY
+                )
             }
         }
     }
@@ -66,7 +99,11 @@ class CameraActivity : AppCompatActivity() {
         binding.image.setImageBitmap(bitmap)
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
         if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -74,7 +111,11 @@ class CameraActivity : AppCompatActivity() {
                 PERMISSION_GALLERY -> galleryLauncher.launch("image/*")
                 PERMISSION_CAMERA -> {
                     val file = File(getFilesDir(), "picFromCamera")
-                    uri = FileProvider.getUriForFile(baseContext, baseContext.packageName + ".fileprovider", file)
+                    uri = FileProvider.getUriForFile(
+                        baseContext,
+                        baseContext.packageName + ".fileprovider",
+                        file
+                    )
                     cameraLauncher.launch(uri)
                 }
             }
@@ -82,6 +123,4 @@ class CameraActivity : AppCompatActivity() {
             Toast.makeText(this, "Permiso denegado", Toast.LENGTH_SHORT).show()
         }
     }
-
-
-    }
+}
