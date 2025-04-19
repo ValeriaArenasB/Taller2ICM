@@ -32,8 +32,7 @@
         android:ems="10"
         android:inputType="text"
         android:layout_marginHorizontal="10dp"
-        android:background="@drawable/round_corners"
-        android:padding="16dp"/>
+        android:background="@drawable/round_corners" />
 
 
 

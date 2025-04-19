@@ -34,7 +34,9 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
 
     private lateinit var manejadorSensores: SensorManager
     private var sensorLuz: Sensor? = null
-    private var valorLuz: Float = 100f // valor por defecto
+    private var valorLuz: Float = 100f
+    private var rutaActual: Polyline? = null
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +60,6 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
 
     override fun onMapReady(googleMap: GoogleMap) {
         mapa = googleMap
-        aplicarEstiloInicial()
         habilitarUbicacion()
 
         mapa.setOnMapLongClickListener { posicion ->
@@ -66,10 +67,6 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
         }
     }
 
-    private fun aplicarEstiloInicial() {
-        val estilo = if (valorLuz < 10f) R.raw.dark else R.raw.retro
-        mapa.setMapStyle(MapStyleOptions.loadRawResourceStyle(this, estilo))
-    }
 
 
     override fun onRequestPermissionsResult(
@@ -83,7 +80,6 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
             grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED
         ) {
-            // 🔁 Solo después de aceptar el permiso, se activa la lógica real
             habilitarUbicacion()
         } else {
             Toast.makeText(this, "Se necesita el permiso de ubicación", Toast.LENGTH_SHORT).show()
@@ -96,13 +92,11 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            // ¡No hagas nada aquí! Solo solicita el permiso.
             ActivityCompat.requestPermissions(this,
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
             return
         }
 
-        // Aquí sí puedes usar la ubicación
         mapa.isMyLocationEnabled = true
 
         clienteUbicacion.lastLocation.addOnSuccessListener { ubicacion ->
@@ -153,9 +147,6 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
     }
 
     private fun guardarEnJSON(ubicacion: Location) {
-
-        Log.d("DEBUG_JSON", "Se va a guardar: ${ubicacion.latitude}, ${ubicacion.longitude}")
-
         val archivo = File(filesDir, "coordenadas.json")
         val arreglo = if (archivo.exists()) JSONArray(archivo.readText()) else JSONArray()
         val formatoFecha = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -171,14 +162,26 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
     private fun buscarDireccion(direccion: String) {
         val geocoder = Geocoder(this)
         val resultados = geocoder.getFromLocationName(direccion, 1)
+
         if (resultados?.isNotEmpty() == true) {
             val ubicacion = resultados[0]
             val coordenadas = LatLng(ubicacion.latitude, ubicacion.longitude)
-            mapa.addMarker(MarkerOptions().position(coordenadas).title(direccion))
+
+            val direccionCompleta = ubicacion.getAddressLine(0) ?: direccion
+
+            mapa.addMarker(MarkerOptions().position(coordenadas).title(direccionCompleta))
             mapa.animateCamera(CameraUpdateFactory.newLatLngZoom(coordenadas, 16f))
             mostrarDistancia(coordenadas)
+            ultimaUbicacion?.let {
+                val origen = LatLng(it.latitude, it.longitude)
+                dibujarRuta(origen, coordenadas)
+            }
+
+        } else {
+            Toast.makeText(this, "Dirección no encontrada", Toast.LENGTH_SHORT).show()
         }
     }
+
 
     private fun marcarYObtenerDireccion(coordenadas: LatLng) {
         val geocoder = Geocoder(this)
@@ -186,6 +189,11 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
         val titulo = resultados?.firstOrNull()?.getAddressLine(0) ?: "Ubicación sin nombre"
         mapa.addMarker(MarkerOptions().position(coordenadas).title(titulo))
         mostrarDistancia(coordenadas)
+        ultimaUbicacion?.let {
+            val origen = LatLng(it.latitude, it.longitude)
+            dibujarRuta(origen, coordenadas)
+        }
+
     }
 
     private fun mostrarDistancia(destino: LatLng) {
@@ -209,11 +217,44 @@ class LocationActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventLis
         if (evento?.sensor?.type == Sensor.TYPE_LIGHT) {
             valorLuz = evento.values[0]
             if (::mapa.isInitialized) {
-                val estilo = if (valorLuz < 10000) R.raw.dark else R.raw.retro
+                val estilo = if (valorLuz < 100) R.raw.dark else R.raw.retro
                 mapa.setMapStyle(MapStyleOptions.loadRawResourceStyle(this, estilo))
             }
         }
     }
+
+
+    private fun dibujarRuta(origen: LatLng, destino: LatLng) {
+        val roadManager = org.osmdroid.bonuspack.routing.OSRMRoadManager(this, "Android")
+        val waypoints = arrayListOf(
+            org.osmdroid.util.GeoPoint(origen.latitude, origen.longitude),
+            org.osmdroid.util.GeoPoint(destino.latitude, destino.longitude)
+        )
+
+        Thread {
+            try {
+                val road = roadManager.getRoad(waypoints)
+                val puntos = road.mRouteHigh.map { LatLng(it.latitude, it.longitude) }
+
+                runOnUiThread {
+                    rutaActual?.remove()
+
+                    rutaActual = mapa.addPolyline(
+                        PolylineOptions()
+                            .addAll(puntos)
+                            .width(10f)
+                            .color(android.graphics.Color.BLUE)
+                    )
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Error al generar ruta", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
+
+
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 

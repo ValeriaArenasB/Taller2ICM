@@ -18,9 +18,10 @@ class ContactsAdapter(context: Context?, c: Cursor?, flags: Int) :
     }
 
     override fun bindView(view: View?, context: Context?, cursor: Cursor?) {
-        val id = cursor?.getInt(0)
+        val position = cursor?.position ?: 0
         val name = cursor?.getString(1)
-        binding.ContactID.text = id.toString()
+        binding.ContactID.text = (position + 1).toString()
         binding.ContactName.text = name
     }
+
 }
